@@ -1,102 +1,142 @@
 import { Request, Response } from "express";
 import pool from "../config/database";
-import { RowDataPacket, ResultSetHeader } from "mysql2";
 
-// GET /api/mahasiswa - Mengambil semua data mahasiswa
 export const getAllMahasiswa = async (req: Request, res: Response) => {
   try {
-    const [rows] = await pool.query<RowDataPacket[]>(
-      "SELECT * FROM mahasiswa ORDER BY id DESC"
+    const search = String(req.query.search || "");
+    const prodiId = req.query.prodi_id ? Number(req.query.prodi_id) : null;
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.max(Number(req.query.limit) || 10, 1);
+    const offset = (page - 1) * limit;
+
+    let where = "WHERE 1=1";
+    const params: any[] = [];
+
+    if (search) {
+      where += " AND (m.nim LIKE ? OR m.nama LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    if (prodiId) {
+      where += " AND m.prodi_id = ?";
+      params.push(prodiId);
+    }
+
+    const [countRows]: any = await pool.query(
+      `SELECT COUNT(*) AS total FROM mahasiswa m ${where}`,
+      params
+    );
+
+    const total = countRows[0].total;
+
+    const [rows] = await pool.query(
+      `SELECT
+        m.id,
+        m.nim,
+        m.nama,
+        m.angkatan,
+        m.foto,
+        p.id AS prodi_id,
+        p.nama_prodi
+      FROM mahasiswa m
+      JOIN prodi p ON m.prodi_id = p.id
+      ${where}
+      ORDER BY m.id DESC
+      LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
 
     res.json({
       message: "Data mahasiswa berhasil diambil",
+      meta: {
+        page,
+        limit,
+        total,
+        totalPage: Math.ceil(total / limit),
+      },
       data: rows,
     });
   } catch (error) {
     console.error("Error getAllMahasiswa:", error);
-    res.status(500).json({
-      message: "Gagal mengambil data mahasiswa",
-    });
+    res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 };
 
-// POST /api/mahasiswa - Menambah data mahasiswa
 export const createMahasiswa = async (req: Request, res: Response) => {
   try {
-    const { nim, nama, prodi, angkatan } = req.body;
+    const { nim, nama, prodi_id, angkatan } = req.body;
+    const foto = req.file ? req.file.filename : null;
 
-    if (!nim || !nama || !prodi || !angkatan) {
+    if (!nim || !nama || !prodi_id || !angkatan) {
       res.status(400).json({
-        message: "Semua field (nim, nama, prodi, angkatan) harus diisi",
+        message: "NIM, nama, prodi, dan angkatan wajib diisi",
       });
       return;
     }
 
-    const [result] = await pool.query<ResultSetHeader>(
-      "INSERT INTO mahasiswa (nim, nama, prodi, angkatan) VALUES (?, ?, ?, ?)",
-      [nim, nama, prodi, angkatan]
+    const [existing]: any = await pool.query(
+      "SELECT id FROM mahasiswa WHERE nim = ?",
+      [nim]
     );
 
-    const [newData] = await pool.query<RowDataPacket[]>(
-      "SELECT * FROM mahasiswa WHERE id = ?",
-      [result.insertId]
+    if (existing.length > 0) {
+      res.status(400).json({ message: "NIM sudah digunakan" });
+      return;
+    }
+
+    const [result]: any = await pool.query(
+      `INSERT INTO mahasiswa (nim, nama, prodi_id, angkatan, foto)
+       VALUES (?, ?, ?, ?, ?)`,
+      [nim, nama, Number(prodi_id), Number(angkatan), foto]
     );
 
     res.status(201).json({
-      message: "Data mahasiswa berhasil ditambahkan",
-      data: newData[0],
+      message: "Mahasiswa berhasil ditambahkan",
+      data: { id: result.insertId, nim, nama, prodi_id, angkatan, foto },
     });
   } catch (error) {
     console.error("Error createMahasiswa:", error);
-    res.status(500).json({
-      message: "Gagal menambahkan data mahasiswa",
-    });
+    res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 };
 
-// PUT /api/mahasiswa/:id - Mengubah data mahasiswa
 export const updateMahasiswa = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { nim, nama, prodi, angkatan } = req.body;
+    const { nim, nama, prodi_id, angkatan } = req.body;
 
-    if (!nim || !nama || !prodi || !angkatan) {
-      res.status(400).json({
-        message: "Semua field (nim, nama, prodi, angkatan) harus diisi",
-      });
-      return;
+    const fields = ["nim = ?", "nama = ?", "prodi_id = ?", "angkatan = ?"];
+    const values: any[] = [nim, nama, Number(prodi_id), Number(angkatan)];
+
+    if (req.file) {
+      fields.push("foto = ?");
+      values.push(req.file.filename);
     }
 
-    const [result] = await pool.query<ResultSetHeader>(
-      "UPDATE mahasiswa SET nim = ?, nama = ?, prodi = ?, angkatan = ? WHERE id = ?",
-      [nim, nama, prodi, angkatan, id]
+    values.push(id);
+
+    const [result]: any = await pool.query(
+      `UPDATE mahasiswa SET ${fields.join(", ")} WHERE id = ?`,
+      values
     );
 
     if (result.affectedRows === 0) {
-      res.status(404).json({
-        message: "Data mahasiswa tidak ditemukan",
-      });
+      res.status(404).json({ message: "Mahasiswa tidak ditemukan" });
       return;
     }
 
-    res.json({
-      message: "Data mahasiswa berhasil diperbarui",
-    });
+    res.json({ message: "Mahasiswa berhasil diperbarui" });
   } catch (error) {
     console.error("Error updateMahasiswa:", error);
-    res.status(500).json({
-      message: "Gagal memperbarui data mahasiswa",
-    });
+    res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 };
 
-// DELETE /api/mahasiswa/:id - Menghapus data mahasiswa
 export const deleteMahasiswa = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const [result] = await pool.query<ResultSetHeader>(
+    const [result]: any = await pool.query(
       "DELETE FROM mahasiswa WHERE id = ?",
       [id]
     );
@@ -113,8 +153,6 @@ export const deleteMahasiswa = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Error deleteMahasiswa:", error);
-    res.status(500).json({
-      message: "Gagal menghapus data mahasiswa",
-    });
+    res.status(500).json({ message: "Terjadi kesalahan server" });
   }
 };
