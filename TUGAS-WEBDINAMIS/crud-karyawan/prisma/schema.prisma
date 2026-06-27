@@ -1,0 +1,48 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Tabel 1: Departemen (induk dari Jabatan)
+model Department {
+  id        Int        @id @default(autoincrement())
+  name      String
+  positions Position[]
+}
+
+// Tabel 2: Jabatan (anak dari Departemen)
+model Position {
+  id           Int        @id @default(autoincrement())
+  name         String
+  departmentId Int
+  department   Department @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+}
+
+// Tabel 3: Skill (untuk Many-to-Many dengan Employee)
+model Skill {
+  id        Int        @id @default(autoincrement())
+  name      String
+  employees Employee[]
+}
+
+// Tabel 4: Employee (tabel utama)
+model Employee {
+  id         Int      @id @default(autoincrement())
+  name       String
+  email      String   @unique
+  gender     String   // "male" | "female"
+  status     String   // "active" | "inactive" | "probation"
+  photoPath  String?
+
+  positionId Int
+  position   Position @relation(fields: [positionId], references: [id])
+
+  skills     Skill[]
+
+  createdAt  DateTime @default(now())
+}
